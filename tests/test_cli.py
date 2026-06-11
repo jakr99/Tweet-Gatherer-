@@ -1,6 +1,7 @@
 import zipfile
 
 from research_agent.cli import main
+from research_agent.x_api import XApiClient
 
 
 def test_cli_init_creates_expected_files(tmp_path):
@@ -39,3 +40,22 @@ def test_cli_collect_without_token_returns_failure(tmp_path, monkeypatch):
     exit_code = main(["--workspace", str(tmp_path), "collect", "--limit", "10"])
 
     assert exit_code == 1
+
+
+def test_cli_collect_reads_token_from_workspace_dotenv(tmp_path, monkeypatch):
+    monkeypatch.delenv("X_BEARER_TOKEN", raising=False)
+    main(["--workspace", str(tmp_path), "init"])
+    (tmp_path / ".env").write_text("X_BEARER_TOKEN=from-dotenv\n", encoding="utf-8")
+    seen_tokens = []
+
+    def fake_search_recent(self, query, max_results=100):
+        seen_tokens.append(self.bearer_token)
+        return {"data": [], "includes": {"media": []}}
+
+    monkeypatch.setattr(XApiClient, "search_recent", fake_search_recent)
+
+    exit_code = main(["--workspace", str(tmp_path), "collect", "--limit", "10"])
+
+    assert exit_code == 0
+    assert seen_tokens
+    assert set(seen_tokens) == {"from-dotenv"}

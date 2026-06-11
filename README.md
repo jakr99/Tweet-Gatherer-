@@ -10,13 +10,12 @@ Use Python 3.11 or newer.
 
 ```bash
 python3 -m pip install -e .
-cp .env.example .env
 ```
 
-Add your X API bearer token to `.env`, then export it in your shell before API collection:
+Paste your X API bearer token into `.env`:
 
-```bash
-export X_BEARER_TOKEN="your-token"
+```text
+X_BEARER_TOKEN=your-token
 ```
 
 Initialize the local workspace:
