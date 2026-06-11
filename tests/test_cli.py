@@ -3,6 +3,7 @@ import zipfile
 from research_agent.auto_label import AutoLabelResult, OpenAIClassifier
 from research_agent.cli import main
 from research_agent.models import Candidate
+from research_agent.store import CandidateStore
 from research_agent.x_api import XApiClient
 
 
@@ -109,9 +110,14 @@ def test_cli_auto_label_requires_openai_key(tmp_path, monkeypatch, capsys):
 def test_cli_auto_label_updates_candidate_with_fake_classifier(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "key")
     main(["--workspace", str(tmp_path), "init"])
-    import_file = tmp_path / "tweets.txt"
-    import_file.write_text("https://x.com/user/status/123\n", encoding="utf-8")
-    main(["--workspace", str(tmp_path), "import", str(import_file)])
+    store = CandidateStore(tmp_path / "data" / "research_agent.sqlite")
+    store.upsert_candidate(
+        Candidate(
+            tweet_id="123",
+            image_id="img",
+            image_url="https://example.com/img.jpg",
+        )
+    )
 
     def fake_classify(self, candidate):
         return AutoLabelResult(
@@ -134,6 +140,21 @@ def test_cli_auto_label_updates_candidate_with_fake_classifier(tmp_path, monkeyp
     assert rows[0]["image_label"] == "literal"
     assert rows[0]["disaster_label"] == "not_real_disaster"
     assert rows[0]["case_label"] == "figurative_text__literal_image__not_real_disaster"
+
+
+def test_cli_auto_label_skips_candidates_without_images(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+    import_file = tmp_path / "tweets.txt"
+    import_file.write_text("https://x.com/user/status/123\n", encoding="utf-8")
+    main(["--workspace", str(tmp_path), "import", str(import_file)])
+
+    exit_code = main(["--workspace", str(tmp_path), "auto-label", "--limit", "1"])
+
+    output = capsys.readouterr()
+    assert exit_code == 0
+    assert "Skipped 1 candidates without images" in output.out
+    assert "Auto-label failed" not in output.err
 
 
 def test_cli_collect_balanced_runs_round_and_exports(tmp_path, monkeypatch):

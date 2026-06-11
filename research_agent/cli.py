@@ -250,7 +250,11 @@ def _auto_label_candidates(
     )
     labeled = 0
     failed = 0
+    skipped = 0
     for candidate in candidates:
+        if not candidate.image_path and not candidate.image_url:
+            skipped += 1
+            continue
         try:
             result = classifier.classify(candidate)
             store.update_candidate_labels(
@@ -273,6 +277,8 @@ def _auto_label_candidates(
                 f"Auto-label failed for {candidate.tweet_id}/{candidate.image_id}: {exc}",
                 file=sys.stderr,
             )
+    if skipped:
+        print(f"Skipped {skipped} candidates without images")
     return labeled, failed
 
 
