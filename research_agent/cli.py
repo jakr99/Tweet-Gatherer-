@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from research_agent.auto_label import DEFAULT_OPENAI_MODEL, OpenAIClassifier
+from research_agent.balancer import balanced_target_met, high_confidence_case_counts
 from research_agent.exporter import export_workbook
 from research_agent.images import record_image_downloads
 from research_agent.importer import read_import_file
@@ -52,6 +54,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     export_parser = subparsers.add_parser("export", help="Export Excel workbook.")
     export_parser.add_argument("--output", default=str(DEFAULT_EXPORT))
+
+    auto_label_parser = subparsers.add_parser(
+        "auto-label",
+        help="Use a multimodal OpenAI model to provisionally label candidates.",
+    )
+    auto_label_parser.add_argument("--limit", type=int, default=50)
+    auto_label_parser.add_argument("--min-confidence", type=float, default=0.65)
+    auto_label_parser.add_argument("--relabel", action="store_true")
+
+    collect_balanced_parser = subparsers.add_parser(
+        "collect-balanced",
+        help="Collect, download, auto-label, and export until target buckets are filled.",
+    )
+    collect_balanced_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    collect_balanced_parser.add_argument("--target-per-case", type=int, default=12)
+    collect_balanced_parser.add_argument("--max-rounds", type=int, default=5)
+    collect_balanced_parser.add_argument("--limit-per-query", type=int, default=100)
+    collect_balanced_parser.add_argument("--min-confidence", type=float, default=0.65)
+    collect_balanced_parser.add_argument("--output", default=str(DEFAULT_EXPORT))
 
     subparsers.add_parser("balance", help="Print balance counts for the eight target cells.")
     return parser
@@ -109,6 +130,29 @@ def main(argv: list[str] | None = None) -> int:
         output_path = export_workbook(store, _resolve(workspace, args.output))
         print(f"Exported workbook to {output_path}")
         return 0
+
+    if args.command == "auto-label":
+        store.initialize()
+        labeled, failed = _auto_label_candidates(
+            store,
+            limit=args.limit,
+            relabel=args.relabel,
+        )
+        print(f"Auto-labeled {labeled} candidates; {failed} failed")
+        return 1 if failed else 0
+
+    if args.command == "collect-balanced":
+        store.initialize()
+        return _collect_balanced(
+            store=store,
+            workspace=workspace,
+            config_path=args.config,
+            target_per_case=args.target_per_case,
+            max_rounds=args.max_rounds,
+            limit_per_query=args.limit_per_query,
+            min_confidence=args.min_confidence,
+            output_path=args.output,
+        )
 
     if args.command == "balance":
         store.initialize()
@@ -186,6 +230,89 @@ def _collect_from_config(
         if _is_credits_depleted_error(error):
             break
     return total, failed
+
+
+def _auto_label_candidates(
+    store: CandidateStore,
+    limit: int,
+    relabel: bool = False,
+) -> tuple[int, int]:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        print("OPENAI_API_KEY is required for auto-label.", file=sys.stderr)
+        return 0, 1
+    model = os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+    classifier = OpenAIClassifier(api_key=api_key, model=model)
+    candidates = (
+        store.list_candidates()[:limit]
+        if relabel
+        else store.list_candidates_needing_labels(limit)
+    )
+    labeled = 0
+    failed = 0
+    for candidate in candidates:
+        try:
+            result = classifier.classify(candidate)
+            store.update_candidate_labels(
+                tweet_id=candidate.tweet_id,
+                image_id=candidate.image_id,
+                text_label=result.text_label,
+                image_label=result.image_label,
+                disaster_label=result.disaster_label,
+                text_confidence=result.text_confidence,
+                image_confidence=result.image_confidence,
+                disaster_confidence=result.disaster_confidence,
+                label_explanation=result.explanation,
+                label_model=model,
+                labeled_at=datetime.now(UTC).isoformat(),
+            )
+            labeled += 1
+        except Exception as exc:  # noqa: BLE001 - row-level model failures should be visible
+            failed += 1
+            print(
+                f"Auto-label failed for {candidate.tweet_id}/{candidate.image_id}: {exc}",
+                file=sys.stderr,
+            )
+    return labeled, failed
+
+
+def _collect_balanced(
+    store: CandidateStore,
+    workspace: Path,
+    config_path: str,
+    target_per_case: int,
+    max_rounds: int,
+    limit_per_query: int,
+    min_confidence: float,
+    output_path: str,
+) -> int:
+    any_failed = False
+    for round_number in range(1, max_rounds + 1):
+        print(f"Balanced collection round {round_number}/{max_rounds}")
+        _, collect_failed = _collect_from_config(
+            store,
+            workspace,
+            config_path,
+            limit_per_query,
+        )
+        downloaded, download_failed = record_image_downloads(store, _resolve(workspace, "data/images"))
+        print(f"Downloaded {downloaded} images; {download_failed} failed")
+        labeled, label_failed = _auto_label_candidates(
+            store,
+            limit=limit_per_query * 10,
+            relabel=False,
+        )
+        print(f"Auto-labeled {labeled} candidates; {label_failed} failed")
+        any_failed = any_failed or bool(collect_failed or label_failed)
+        counts = high_confidence_case_counts(store.list_candidates(), min_confidence)
+        for case_label, count in counts.items():
+            print(f"{case_label}: {count}/{target_per_case}")
+        if balanced_target_met(counts, target_per_case):
+            print("Balanced target reached.")
+            break
+    export_path = export_workbook(store, _resolve(workspace, output_path))
+    print(f"Exported workbook to {export_path}")
+    return 1 if any_failed else 0
 
 
 def _resolve(workspace: Path, path: str | Path) -> Path:

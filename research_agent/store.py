@@ -27,7 +27,23 @@ CANDIDATE_COLUMNS = [
     "created_at",
     "media_type",
     "download_error",
+    "text_confidence",
+    "image_confidence",
+    "disaster_confidence",
+    "label_explanation",
+    "label_model",
+    "labeled_at",
 ]
+
+
+LABEL_METADATA_COLUMNS = {
+    "text_confidence": "real not null default 0",
+    "image_confidence": "real not null default 0",
+    "disaster_confidence": "real not null default 0",
+    "label_explanation": "text not null default ''",
+    "label_model": "text not null default ''",
+    "labeled_at": "text not null default ''",
+}
 
 
 class CandidateStore:
@@ -58,10 +74,17 @@ class CandidateStore:
                     created_at text not null default '',
                     media_type text not null default '',
                     download_error text not null default '',
+                    text_confidence real not null default 0,
+                    image_confidence real not null default 0,
+                    disaster_confidence real not null default 0,
+                    label_explanation text not null default '',
+                    label_model text not null default '',
+                    labeled_at text not null default '',
                     primary key (tweet_id, image_id)
                 )
                 """
             )
+            self._ensure_candidate_columns(connection)
             connection.execute(
                 """
                 create table if not exists collection_runs (
@@ -75,6 +98,17 @@ class CandidateStore:
                 )
                 """
             )
+
+    def _ensure_candidate_columns(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(candidates)").fetchall()
+        }
+        for column, definition in LABEL_METADATA_COLUMNS.items():
+            if column not in existing_columns:
+                connection.execute(
+                    f"alter table candidates add column {column} {definition}"
+                )
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -108,6 +142,78 @@ class CandidateStore:
                 f"select {', '.join(CANDIDATE_COLUMNS)} from candidates order by tweet_id, image_id"
             ).fetchall()
         return [self._candidate_from_row(row) for row in rows]
+
+    def list_candidates_needing_labels(self, limit: int) -> list[Candidate]:
+        self.initialize()
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select {', '.join(CANDIDATE_COLUMNS)}
+                from candidates
+                where text_label = 'unknown'
+                   or image_label = 'unknown'
+                   or disaster_label = 'unknown'
+                order by collected_at, tweet_id, image_id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._candidate_from_row(row) for row in rows]
+
+    def update_candidate_labels(
+        self,
+        tweet_id: str,
+        image_id: str,
+        text_label: str,
+        image_label: str,
+        disaster_label: str,
+        text_confidence: float,
+        image_confidence: float,
+        disaster_confidence: float,
+        label_explanation: str,
+        label_model: str,
+        labeled_at: str,
+    ) -> None:
+        self.initialize()
+        candidate = Candidate(
+            tweet_id=tweet_id,
+            image_id=image_id,
+            text_label=text_label,
+            image_label=image_label,
+            disaster_label=disaster_label,
+        )
+        normalize_candidate_case(candidate)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                update candidates
+                set text_label = ?,
+                    image_label = ?,
+                    disaster_label = ?,
+                    case_label = ?,
+                    text_confidence = ?,
+                    image_confidence = ?,
+                    disaster_confidence = ?,
+                    label_explanation = ?,
+                    label_model = ?,
+                    labeled_at = ?
+                where tweet_id = ? and image_id = ?
+                """,
+                (
+                    text_label,
+                    image_label,
+                    disaster_label,
+                    candidate.case_label,
+                    text_confidence,
+                    image_confidence,
+                    disaster_confidence,
+                    label_explanation,
+                    label_model,
+                    labeled_at,
+                    tweet_id,
+                    image_id,
+                ),
+            )
 
     def update_image_result(
         self,

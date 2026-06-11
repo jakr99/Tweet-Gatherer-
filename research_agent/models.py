@@ -30,6 +30,12 @@ class Candidate:
     created_at: str = ""
     media_type: str = ""
     download_error: str = ""
+    text_confidence: float = 0.0
+    image_confidence: float = 0.0
+    disaster_confidence: float = 0.0
+    label_explanation: str = ""
+    label_model: str = ""
+    labeled_at: str = ""
 
     def __post_init__(self) -> None:
         if self.text_label not in TEXT_LABELS:

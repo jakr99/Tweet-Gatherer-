@@ -12,10 +12,12 @@ Use Python 3.11 or newer.
 python3 -m pip install -e .
 ```
 
-Paste your X API bearer token into `.env`:
+Paste your X API bearer token and OpenAI API key into `.env`:
 
 ```text
 X_BEARER_TOKEN=your-token
+OPENAI_API_KEY=your-openai-key
+OPENAI_MODEL=gpt-5.5
 ```
 
 Initialize the local workspace:
@@ -48,7 +50,15 @@ The default collection limit is `10` per query. Pass a number to change it:
 ./run_agent.sh 100
 ```
 
-The script runs `init`, `collect`, `download-images`, `balance`, and `export`.
+The script runs `init`, `collect-balanced`, `balance`, and exports `exports/candidates.xlsx`.
+
+Optional tuning:
+
+```bash
+TARGET_PER_CASE=12 MAX_ROUNDS=5 MIN_CONFIDENCE=0.65 ./run_agent.sh 100
+```
+
+`collect-balanced` collects candidates, downloads images, auto-labels with the configured OpenAI model, and tries to fill each of the eight target cases.
 
 ## Import Candidate IDs Or URLs
 
@@ -76,6 +86,22 @@ data/images/<tweet_id>/<image_id>.<extension>
 
 Rows remain in the database when image downloads fail, with the failure recorded.
 
+## Auto-Label Candidates
+
+Use a multimodal OpenAI model to assign provisional labels:
+
+```bash
+research-agent auto-label --limit 50 --min-confidence 0.65
+```
+
+The model labels are best-effort suggestions for review, not final ground truth.
+
+To collect and label toward an even distribution:
+
+```bash
+research-agent collect-balanced --target-per-case 12 --max-rounds 5 --limit-per-query 100
+```
+
 ## Export Excel Workbook
 
 ```bash
@@ -84,7 +110,7 @@ research-agent export --output exports/candidates.xlsx
 
 The workbook contains:
 
-- `candidates`: tweet ID, image ID, text, image URL, image path, labels, review status, source query, timestamps, and notes.
+- `candidates`: tweet ID, image ID, text, image URL, image path, text label, image label, and disaster label.
 - `balance_summary`: counts for all eight target cells, including zero-count cells.
 - `collection_runs`: query run metadata and errors.
 
