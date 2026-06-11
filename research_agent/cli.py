@@ -72,7 +72,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "import":
         store.initialize()
-        tweet_ids = read_import_file(args.path)
+        import_path = Path(args.path)
+        if not import_path.exists():
+            print(f"Import file not found: {import_path}", file=sys.stderr)
+            return 1
+        tweet_ids = read_import_file(import_path)
         for tweet_id in tweet_ids:
             store.upsert_candidate(
                 Candidate(

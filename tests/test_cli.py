@@ -33,6 +33,16 @@ def test_cli_import_balance_and_export(tmp_path, capsys):
         assert "xl/workbook.xml" in workbook.namelist()
 
 
+def test_cli_import_missing_file_returns_clean_error(tmp_path, capsys):
+    main(["--workspace", str(tmp_path), "init"])
+
+    exit_code = main(["--workspace", str(tmp_path), "import", str(tmp_path / "missing.txt")])
+
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert "Import file not found" in output.err
+
+
 def test_cli_collect_without_token_returns_failure(tmp_path, monkeypatch):
     monkeypatch.delenv("X_BEARER_TOKEN", raising=False)
     main(["--workspace", str(tmp_path), "init"])
