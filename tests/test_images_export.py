@@ -1,4 +1,5 @@
 import zipfile
+import xml.etree.ElementTree as ET
 
 from research_agent.exporter import export_workbook
 from research_agent.images import image_path_for_candidate, record_image_downloads, ssl_context
@@ -80,3 +81,44 @@ def test_export_empty_store_still_writes_candidate_headers(tmp_path):
     assert "tweet_id" in sheet_xml
     assert "image_id" in sheet_xml
     assert "image_url" in sheet_xml
+
+
+def test_export_candidate_sheet_has_only_requested_columns(tmp_path):
+    store = CandidateStore(tmp_path / "agent.sqlite")
+    store.upsert_candidate(
+        Candidate(
+            tweet_id="1",
+            image_id="img",
+            tweet_text="Flood waters rising",
+            image_url="https://example.com/img.jpg",
+            image_path="data/images/1/img.jpg",
+            text_label="literal",
+            image_label="literal",
+            disaster_label="real_disaster",
+            review_status="accepted",
+            source_query="flood_real",
+        )
+    )
+    output_path = tmp_path / "exports" / "candidates.xlsx"
+
+    export_workbook(store, output_path)
+
+    with zipfile.ZipFile(output_path) as workbook:
+        sheet_xml = workbook.read("xl/worksheets/sheet1.xml")
+    root = ET.fromstring(sheet_xml)
+    namespace = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    first_row = root.find(".//main:row[@r='1']", namespace)
+    headers = [
+        cell.find("main:is/main:t", namespace).text
+        for cell in first_row.findall("main:c", namespace)
+    ]
+    assert headers == [
+        "tweet_id",
+        "image_id",
+        "tweet_text",
+        "image_url",
+        "image_path",
+        "text_label",
+        "image_label",
+        "disaster_label",
+    ]
