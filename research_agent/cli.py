@@ -13,7 +13,7 @@ import yaml
 from research_agent.exporter import export_workbook
 from research_agent.images import record_image_downloads
 from research_agent.importer import read_import_file
-from research_agent.labels import balance_rows
+from research_agent.labels import balance_rows, incomplete_label_summary
 from research_agent.models import Candidate
 from research_agent.store import CandidateStore
 from research_agent.x_api import XApiClient, candidates_from_search_response
@@ -112,12 +112,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "balance":
         store.initialize()
-        for row in balance_rows(store.list_candidates()):
+        candidates = store.list_candidates()
+        for row in balance_rows(candidates):
             print(
                 f"{row['case_label']}: total={row['total']} "
                 f"candidate={row['candidate']} needs_review={row['needs_review']} "
                 f"accepted={row['accepted']} rejected={row['rejected']}"
             )
+        summary = incomplete_label_summary(candidates)
+        print(
+            f"{summary['case_label']}: total={summary['total']} "
+            f"candidate={summary['candidate']} needs_review={summary['needs_review']} "
+            f"accepted={summary['accepted']} rejected={summary['rejected']} "
+            f"unknown_text={summary['unknown_text_label']} "
+            f"unknown_image={summary['unknown_image_label']} "
+            f"unknown_disaster={summary['unknown_disaster_label']}"
+        )
         return 0
 
     parser.error(f"Unknown command: {args.command}")

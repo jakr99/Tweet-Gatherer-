@@ -28,6 +28,7 @@ def test_cli_import_balance_and_export(tmp_path, capsys):
     assert export_exit == 0
     assert "Imported 1 candidate references" in output
     assert "literal_text__literal_image__real_disaster" in output
+    assert "incomplete_or_unknown_labels: total=1" in output
     export_path = tmp_path / "exports" / "candidates.xlsx"
     with zipfile.ZipFile(export_path) as workbook:
         assert "xl/workbook.xml" in workbook.namelist()

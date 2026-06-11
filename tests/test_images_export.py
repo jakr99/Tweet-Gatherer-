@@ -61,9 +61,11 @@ def test_export_workbook_contains_required_sheets(tmp_path):
 
     with zipfile.ZipFile(output_path) as workbook:
         workbook_xml = workbook.read("xl/workbook.xml").decode("utf-8")
+        balance_xml = workbook.read("xl/worksheets/sheet2.xml").decode("utf-8")
     assert 'name="candidates"' in workbook_xml
     assert 'name="balance_summary"' in workbook_xml
     assert 'name="collection_runs"' in workbook_xml
+    assert "incomplete_or_unknown_labels" in balance_xml
 
 
 def test_export_empty_store_still_writes_candidate_headers(tmp_path):

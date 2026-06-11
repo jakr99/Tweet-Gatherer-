@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from research_agent.labels import balance_rows
+from research_agent.labels import balance_rows, incomplete_label_summary
 from research_agent.store import CANDIDATE_COLUMNS, CandidateStore
 from research_agent.xlsx import write_workbook
 
@@ -15,7 +15,7 @@ def export_workbook(store: CandidateStore, output_path: str | Path) -> Path:
         candidate_rows = [{column: "" for column in CANDIDATE_COLUMNS}]
     sheets = {
         "candidates": candidate_rows,
-        "balance_summary": balance_rows(candidates),
+        "balance_summary": balance_rows(candidates) + [incomplete_label_summary(candidates)],
         "collection_runs": store.list_collection_runs()
         or [
             {
