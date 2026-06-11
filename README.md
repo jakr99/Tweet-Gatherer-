@@ -34,6 +34,22 @@ research-agent collect --config config/queries.yaml --limit 100
 
 The collector uses X API recent search and requests image media expansions. Direct browser scraping is intentionally not part of this first version.
 
+## One-Command Run
+
+After setup, run the full collection/export workflow with:
+
+```bash
+./run_agent.sh
+```
+
+The default collection limit is `10` per query. Pass a number to change it:
+
+```bash
+./run_agent.sh 100
+```
+
+The script runs `init`, `collect`, `download-images`, `balance`, and `export`.
+
 ## Import Candidate IDs Or URLs
 
 You can import a text file with one tweet URL or ID per line:
