@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Local Twitter/X disaster metaphor dataset candidate collector"
 requires-python = ">=3.11"
 dependencies = [
+  "certifi>=2024",
   "PyYAML>=6",
 ]
 

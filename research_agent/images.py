@@ -5,6 +5,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+from research_agent.http import ssl_context
 from research_agent.models import Candidate
 from research_agent.store import CandidateStore
 
@@ -21,7 +22,7 @@ def image_path_for_candidate(candidate: Candidate, image_root: str | Path) -> Pa
 
 def default_downloader(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "research-agent/0.1"})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=30, context=ssl_context()) as response:
         return response.read()
 
 

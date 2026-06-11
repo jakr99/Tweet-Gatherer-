@@ -1,4 +1,4 @@
-from research_agent.x_api import XApiClient, candidates_from_search_response
+from research_agent.x_api import XApiClient, candidates_from_search_response, ssl_context
 
 
 def test_candidates_from_search_response_maps_image_media():
@@ -57,3 +57,9 @@ def test_recent_search_request_params_include_media_expansions():
     assert params["max_results"] == "25"
     assert "attachments.media_keys" in params["expansions"]
     assert "url" in params["media.fields"]
+
+
+def test_ssl_context_uses_certifi_bundle():
+    context = ssl_context()
+
+    assert context.get_ca_certs()

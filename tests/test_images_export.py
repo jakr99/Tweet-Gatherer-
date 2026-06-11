@@ -1,7 +1,7 @@
 import zipfile
 
 from research_agent.exporter import export_workbook
-from research_agent.images import image_path_for_candidate, record_image_downloads
+from research_agent.images import image_path_for_candidate, record_image_downloads, ssl_context
 from research_agent.models import Candidate
 from research_agent.store import CandidateStore
 
@@ -16,6 +16,12 @@ def test_image_path_for_candidate_uses_tweet_and_image_ids(tmp_path):
     path = image_path_for_candidate(candidate, tmp_path)
 
     assert path == tmp_path / "123" / "3_abc.jpg"
+
+
+def test_image_downloader_ssl_context_uses_certifi_bundle():
+    context = ssl_context()
+
+    assert context.get_ca_certs()
 
 
 def test_record_image_downloads_preserves_failed_rows(tmp_path):
