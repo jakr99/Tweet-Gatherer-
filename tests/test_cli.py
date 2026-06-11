@@ -69,3 +69,24 @@ def test_cli_collect_reads_token_from_workspace_dotenv(tmp_path, monkeypatch):
     assert exit_code == 0
     assert seen_tokens
     assert set(seen_tokens) == {"from-dotenv"}
+
+
+def test_cli_collect_stops_after_credits_depleted(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("X_BEARER_TOKEN", "token")
+    main(["--workspace", str(tmp_path), "init"])
+    calls = []
+
+    def fake_search_recent(self, query, max_results=100):
+        calls.append(query)
+        raise RuntimeError(
+            'X API request failed with HTTP 402: {"title":"CreditsDepleted"}'
+        )
+
+    monkeypatch.setattr(XApiClient, "search_recent", fake_search_recent)
+
+    exit_code = main(["--workspace", str(tmp_path), "collect", "--limit", "10"])
+
+    output = capsys.readouterr()
+    assert exit_code == 1
+    assert len(calls) == 1
+    assert "X API credits are depleted" in output.err

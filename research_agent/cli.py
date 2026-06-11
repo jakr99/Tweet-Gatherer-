@@ -162,10 +162,19 @@ def _collect_from_config(
         except Exception as exc:  # noqa: BLE001 - record run-level API failure
             error = str(exc)
             failed += 1
-            print(f"Collection failed for {name}: {error}", file=sys.stderr)
+            if _is_credits_depleted_error(error):
+                print(
+                    "X API credits are depleted for this bearer token/account. "
+                    "Collection cannot continue until X API credits or access are restored.",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"Collection failed for {name}: {error}", file=sys.stderr)
         finished = datetime.now(UTC).isoformat()
         store.add_collection_run("x_api", name, started, finished, len(candidates), error)
         total += len(candidates)
+        if _is_credits_depleted_error(error):
+            break
     return total, failed
 
 
@@ -179,6 +188,10 @@ def _resolve(workspace: Path, path: str | Path) -> Path:
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
+
+
+def _is_credits_depleted_error(error: str) -> bool:
+    return "CreditsDepleted" in error or "does not have any credits" in error
 
 
 def _load_dotenv(path: Path) -> None:
