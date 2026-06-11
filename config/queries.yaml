@@ -1,0 +1,17 @@
+queries:
+  - name: wildfire_real_disaster_images
+    query: '(wildfire OR fire OR evacuation) has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+  - name: flood_real_disaster_images
+    query: '(flood OR flooding OR flashflood) has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+  - name: hurricane_real_disaster_images
+    query: '(hurricane OR storm surge OR evacuation) has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+  - name: non_disaster_figurative_images
+    query: '("storm of" OR "flood of" OR "on fire") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: not_real_disaster
