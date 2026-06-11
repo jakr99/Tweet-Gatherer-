@@ -60,6 +60,30 @@ TARGET_PER_CASE=12 MAX_ROUNDS=5 MIN_CONFIDENCE=0.65 ./run_agent.sh 100
 
 `collect-balanced` collects candidates, downloads images, auto-labels with the configured OpenAI model, and tries to fill each of the eight target cases.
 
+## Two-Phase Run
+
+If you want to avoid losing momentum when OpenAI rate limits pause labeling, split the workflow into collection and labeling.
+
+First collect tweets and download images:
+
+```bash
+./collect_tweets.sh 100
+```
+
+Then label existing collected candidates in small batches:
+
+```bash
+./label_tweets.sh 10
+```
+
+If labeling stops because of OpenAI limits, wait for the reset and rerun only:
+
+```bash
+./label_tweets.sh 10
+```
+
+This does not collect more tweets; it resumes labeling rows that still have unknown labels.
+
 ## Import Candidate IDs Or URLs
 
 You can import a text file with one tweet URL or ID per line:
