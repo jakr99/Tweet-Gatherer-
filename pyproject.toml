@@ -10,5 +10,9 @@ dependencies = [
 [project.scripts]
 research-agent = "research_agent.cli:main"
 
+[tool.setuptools.packages.find]
+include = ["research_agent*"]
+exclude = ["config*", "docs*", "tests*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
