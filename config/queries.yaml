@@ -1,17 +1,63 @@
 queries:
+  # Baseline real-disaster searches. These tend to produce literal text + literal images,
+  # but they also provide broad coverage for the model to sort.
   - name: wildfire_real_disaster_images
-    query: '(wildfire OR fire OR evacuation) has:images lang:en -is:retweet'
+    query: '("wildfire" OR "brush fire" OR "evacuation order") has:images lang:en -is:retweet'
     seed_labels:
       disaster_label: real_disaster
   - name: flood_real_disaster_images
-    query: '(flood OR flooding OR flashflood) has:images lang:en -is:retweet'
+    query: '("flooding" OR "flash flood" OR "flood warning") has:images lang:en -is:retweet'
     seed_labels:
       disaster_label: real_disaster
   - name: hurricane_real_disaster_images
-    query: '(hurricane OR storm surge OR evacuation) has:images lang:en -is:retweet'
+    query: '("hurricane" OR "storm surge" OR "hurricane warning") has:images lang:en -is:retweet'
     seed_labels:
       disaster_label: real_disaster
-  - name: non_disaster_figurative_images
-    query: '("storm of" OR "flood of" OR "on fire") has:images lang:en -is:retweet'
+
+  # Targets: literal text + figurative image + real_disaster.
+  # These often appear in solidarity, awareness, prayer, donation, or symbolic support posts.
+  - name: real_disaster_symbolic_support_images
+    query: '("pray for" OR "stand with" OR "support victims" OR "disaster relief") ("wildfire" OR "flood" OR "hurricane" OR "earthquake") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+  - name: real_disaster_awareness_poster_images
+    query: '("donate" OR "relief fund" OR "emergency appeal" OR "ways to help") ("wildfire" OR "flood" OR "hurricane" OR "earthquake") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+
+  # Targets: figurative_text + literal_image + real_disaster and figurative_text + figurative_image + real_disaster.
+  # These add metaphor/idiom terms around real disaster keywords.
+  - name: real_disaster_figurative_text_images
+    query: '("like a war zone" OR "apocalyptic" OR "hellscape" OR "nature''s fury" OR "biblical") ("wildfire" OR "flood" OR "hurricane" OR "earthquake" OR "tornado") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+  - name: real_disaster_personified_text_images
+    query: '("ripped through" OR "swallowed" OR "devoured" OR "wiped out" OR "unleashed") ("wildfire" OR "flood" OR "hurricane" OR "storm" OR "tornado") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: real_disaster
+
+  # Targets: literal_text + figurative_image + not_real_disaster.
+  # These are likely non-disaster posts with direct text but symbolic/meme-like images.
+  - name: non_disaster_symbolic_reaction_images
+    query: '("big announcement" OR "breaking news" OR "major update" OR "we need your help") ("meme" OR "poster" OR "graphic") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: not_real_disaster
+  - name: non_disaster_literal_event_symbolic_images
+    query: '("new policy" OR "campaign launch" OR "product launch" OR "team announcement") ("storm" OR "fire" OR "flood") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: not_real_disaster
+
+  # Targets: figurative_text + literal_image + not_real_disaster.
+  # These use disaster metaphors in sports, politics, entertainment, finance, work, or everyday life.
+  - name: non_disaster_figurative_text_literal_images
+    query: '("on fire" OR "flooded with" OR "storm of criticism" OR "political storm" OR "media storm" OR "meltdown") has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: not_real_disaster
+  - name: non_disaster_sports_figurative_text_images
+    query: '("on fire" OR "comeback storm" OR "floodgates opened" OR "meltdown") (game OR match OR team OR player OR season) has:images lang:en -is:retweet'
+    seed_labels:
+      disaster_label: not_real_disaster
+  - name: non_disaster_work_life_figurative_text_images
+    query: '("drowning in" OR "buried under" OR "swamped with" OR "flooded with") (emails OR work OR homework OR orders OR requests) has:images lang:en -is:retweet'
     seed_labels:
       disaster_label: not_real_disaster
