@@ -18,7 +18,11 @@ from research_agent.importer import read_import_file
 from research_agent.labels import balance_rows, incomplete_label_summary
 from research_agent.models import Candidate
 from research_agent.store import CandidateStore
-from research_agent.x_api import XApiClient, candidates_from_search_response
+from research_agent.x_api import (
+    XApiClient,
+    candidates_from_search_response,
+    text_contains_required_term,
+)
 
 
 DEFAULT_DB = Path("data/research_agent.sqlite")
@@ -205,12 +209,14 @@ def _collect_from_config(
         name = query_config["name"]
         query = query_config["query"]
         seed_labels = query_config.get("seed_labels", {})
+        required_terms = query_config.get("required_terms", [])
         started = datetime.now(UTC).isoformat()
         error = ""
         candidates = []
         try:
             payload = client.search_recent(query, max_results=limit)
             candidates = candidates_from_search_response(payload, name, query, seed_labels)
+            candidates = _filter_by_required_terms(candidates, seed_labels, required_terms)
             for candidate in candidates:
                 store.upsert_candidate(candidate)
         except Exception as exc:  # noqa: BLE001 - record run-level API failure
@@ -230,6 +236,20 @@ def _collect_from_config(
         if _is_credits_depleted_error(error):
             break
     return total, failed
+
+
+def _filter_by_required_terms(
+    candidates: list[Candidate],
+    seed_labels: dict[str, str],
+    required_terms: list[str],
+) -> list[Candidate]:
+    if seed_labels.get("disaster_label") != "not_real_disaster" or not required_terms:
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if text_contains_required_term(candidate.tweet_text, required_terms)
+    ]
 
 
 def _auto_label_candidates(
@@ -363,6 +383,10 @@ def _starter_queries() -> str:
       disaster_label: real_disaster
   - name: non_disaster_figurative_images
     query: '("storm of" OR "flood of" OR "on fire") has:images lang:en -is:retweet'
+    required_terms:
+      - storm
+      - flood
+      - fire
     seed_labels:
       disaster_label: not_real_disaster
 """

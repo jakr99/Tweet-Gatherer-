@@ -36,6 +36,8 @@ research-agent collect --config config/queries.yaml --limit 100
 
 The collector uses X API recent search and requests image media expansions. Direct browser scraping is intentionally not part of this first version.
 
+For queries seeded as `not_real_disaster`, you can set `required_terms` in `config/queries.yaml`. Those terms must appear in the returned tweet text before the candidate is stored, which keeps non-disaster rows focused on disaster terminology used outside an actual disaster context.
+
 ## One-Command Run
 
 After setup, run the full collection/export workflow with:

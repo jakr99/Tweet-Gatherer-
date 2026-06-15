@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,6 +16,7 @@ from research_agent.models import Candidate
 
 RECENT_SEARCH_URL = "https://api.x.com/2/tweets/search/recent"
 TWEET_LOOKUP_URL = "https://api.x.com/2/tweets"
+_INFLECTED_SUFFIXES = ("", "s", "ed", "ing")
 
 
 @dataclass(slots=True)
@@ -109,3 +111,27 @@ def candidates_from_search_response(
             )
 
     return candidates
+
+
+def text_contains_required_term(text: str, required_terms: list[str] | tuple[str, ...]) -> bool:
+    if not required_terms:
+        return True
+
+    normalized_text = text.casefold()
+    for term in required_terms:
+        normalized_term = term.strip().casefold()
+        if not normalized_term:
+            continue
+        if " " in normalized_term:
+            if normalized_term in normalized_text:
+                return True
+            continue
+        if _word_or_inflected_match(normalized_text, normalized_term):
+            return True
+    return False
+
+
+def _word_or_inflected_match(text: str, term: str) -> bool:
+    suffixes = _INFLECTED_SUFFIXES if term.isalpha() else ("",)
+    alternatives = "|".join(re.escape(f"{term}{suffix}") for suffix in suffixes)
+    return bool(re.search(rf"\b(?:{alternatives})\b", text))

@@ -96,6 +96,76 @@ def test_cli_collect_stops_after_credits_depleted(tmp_path, monkeypatch, capsys)
     assert "X API credits are depleted" in output.err
 
 
+def test_cli_collect_filters_non_disaster_candidates_without_required_terms(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("X_BEARER_TOKEN", "token")
+    main(["--workspace", str(tmp_path), "init"])
+    config_path = tmp_path / "config" / "non_disaster_required_terms.yaml"
+    config_path.write_text(
+        """queries:
+  - name: non_disaster_test
+    query: '("storm" OR "poster") has:images lang:en -is:retweet'
+    required_terms:
+      - storm
+      - flood
+    seed_labels:
+      disaster_label: not_real_disaster
+""",
+        encoding="utf-8",
+    )
+
+    def fake_search_recent(self, query, max_results=100):
+        return {
+            "data": [
+                {
+                    "id": "1",
+                    "text": "Big announcement with a new poster.",
+                    "attachments": {"media_keys": ["3_skip"]},
+                },
+                {
+                    "id": "2",
+                    "text": "A political storm is building around the policy.",
+                    "attachments": {"media_keys": ["3_keep"]},
+                },
+            ],
+            "includes": {
+                "media": [
+                    {
+                        "media_key": "3_skip",
+                        "type": "photo",
+                        "url": "https://example.com/skip.jpg",
+                    },
+                    {
+                        "media_key": "3_keep",
+                        "type": "photo",
+                        "url": "https://example.com/keep.jpg",
+                    },
+                ]
+            },
+        }
+
+    monkeypatch.setattr(XApiClient, "search_recent", fake_search_recent)
+
+    exit_code = main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "collect",
+            "--config",
+            str(config_path),
+            "--limit",
+            "10",
+        ]
+    )
+
+    assert exit_code == 0
+    rows = _candidate_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["tweet_id"] == "2"
+
+
 def test_cli_auto_label_requires_openai_key(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     main(["--workspace", str(tmp_path), "init"])

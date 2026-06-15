@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LIMIT="${1:-10}"
+LIMIT="${1:-50}"
 MIN_CONFIDENCE="${MIN_CONFIDENCE:-0.65}"
 EXPORT_PATH="${EXPORT_PATH:-exports/candidates.xlsx}"
 

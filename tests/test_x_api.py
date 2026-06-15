@@ -1,4 +1,9 @@
-from research_agent.x_api import XApiClient, candidates_from_search_response, ssl_context
+from research_agent.x_api import (
+    XApiClient,
+    candidates_from_search_response,
+    ssl_context,
+    text_contains_required_term,
+)
 
 
 def test_candidates_from_search_response_maps_image_media():
@@ -57,6 +62,25 @@ def test_recent_search_request_params_include_media_expansions():
     assert params["max_results"] == "25"
     assert "attachments.media_keys" in params["expansions"]
     assert "url" in params["media.fields"]
+
+
+def test_text_contains_required_term_matches_disaster_terms_case_insensitively():
+    assert text_contains_required_term(
+        "The campaign is facing a political STORM tonight.",
+        ["storm", "flood"],
+    )
+    assert text_contains_required_term(
+        "The inbox is flooded with requests.",
+        ["flood", "flooded"],
+    )
+    assert not text_contains_required_term(
+        "Big announcement with a new poster.",
+        ["storm", "flood", "fire"],
+    )
+
+
+def test_text_contains_required_term_allows_empty_required_terms():
+    assert text_contains_required_term("Any tweet text is allowed.", [])
 
 
 def test_ssl_context_uses_certifi_bundle():

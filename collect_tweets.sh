@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LIMIT="${1:-100}"
+LIMIT="${1:-50}"
 CONFIG_PATH="${CONFIG_PATH:-config/queries.yaml}"
 EXPORT_PATH="${EXPORT_PATH:-exports/candidates.xlsx}"
 
