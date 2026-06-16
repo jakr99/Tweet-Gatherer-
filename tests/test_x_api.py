@@ -64,6 +64,18 @@ def test_recent_search_request_params_include_media_expansions():
     assert "url" in params["media.fields"]
 
 
+def test_recent_search_request_params_include_pagination_token_when_present():
+    client = XApiClient("token")
+
+    params = client.recent_search_params(
+        "flood has:images",
+        max_results=25,
+        next_token="page-2",
+    )
+
+    assert params["pagination_token"] == "page-2"
+
+
 def test_text_contains_required_term_matches_disaster_terms_case_insensitively():
     assert text_contains_required_term(
         "The campaign is facing a political STORM tonight.",

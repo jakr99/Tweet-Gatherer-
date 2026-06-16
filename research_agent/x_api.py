@@ -27,17 +27,34 @@ class XApiClient:
         if self.bearer_token is None:
             self.bearer_token = os.environ.get("X_BEARER_TOKEN")
 
-    def recent_search_params(self, query: str, max_results: int = 100) -> dict[str, str]:
-        return {
+    def recent_search_params(
+        self,
+        query: str,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, str]:
+        params = {
             "query": query,
             "max_results": str(max_results),
             "tweet.fields": "attachments,author_id,created_at,text",
             "expansions": "attachments.media_keys",
             "media.fields": "media_key,type,url,preview_image_url,width,height",
         }
+        if next_token:
+            params["pagination_token"] = next_token
+        return params
 
-    def search_recent(self, query: str, max_results: int = 100) -> dict[str, Any]:
-        params = self.recent_search_params(query, max_results=max_results)
+    def search_recent(
+        self,
+        query: str,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params = self.recent_search_params(
+            query,
+            max_results=max_results,
+            next_token=next_token,
+        )
         return self._get_json(RECENT_SEARCH_URL, params)
 
     def hydrate_tweets(self, tweet_ids: list[str]) -> dict[str, Any]:

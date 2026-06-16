@@ -120,7 +120,7 @@ class CandidateStore:
         normalize_candidate_case(candidate)
         values = [getattr(candidate, column) for column in CANDIDATE_COLUMNS]
         assignments = ", ".join(
-            f"{column}=excluded.{column}"
+            _candidate_upsert_assignment(column)
             for column in CANDIDATE_COLUMNS
             if column not in {"tweet_id", "image_id"}
         )
@@ -134,7 +134,6 @@ class CandidateStore:
                 """,
                 values,
             )
-
     def list_candidates(self) -> list[Candidate]:
         self.initialize()
         with self.connect() as connection:
@@ -233,6 +232,17 @@ class CandidateStore:
                 (image_path, download_error, tweet_id, image_id),
             )
 
+    def delete_candidates(self, keys: list[tuple[str, str]]) -> int:
+        if not keys:
+            return 0
+        self.initialize()
+        with self.connect() as connection:
+            connection.executemany(
+                "delete from candidates where tweet_id = ? and image_id = ?",
+                keys,
+            )
+        return len(keys)
+
     def add_collection_run(
         self,
         source: str,
@@ -268,3 +278,26 @@ class CandidateStore:
     @staticmethod
     def _candidate_from_row(row: sqlite3.Row) -> Candidate:
         return Candidate(**{column: row[column] for column in CANDIDATE_COLUMNS})
+
+
+def _candidate_upsert_assignment(column: str) -> str:
+    preserved_columns = {
+        "text_label",
+        "image_label",
+        "disaster_label",
+        "case_label",
+        "text_confidence",
+        "image_confidence",
+        "disaster_confidence",
+        "label_explanation",
+        "label_model",
+        "labeled_at",
+    }
+    if column == "review_status":
+        return "review_status=candidates.review_status"
+    if column in preserved_columns:
+        return (
+            f"{column}=case when candidates.case_label = 'unknown' "
+            f"then excluded.{column} else candidates.{column} end"
+        )
+    return f"{column}=excluded.{column}"

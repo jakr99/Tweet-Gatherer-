@@ -15,7 +15,7 @@ from research_agent.balancer import balanced_target_met, high_confidence_case_co
 from research_agent.exporter import export_workbook
 from research_agent.images import record_image_downloads
 from research_agent.importer import read_import_file
-from research_agent.labels import balance_rows, incomplete_label_summary
+from research_agent.labels import ALL_CASES, balance_rows, derive_case_label, incomplete_label_summary
 from research_agent.models import Candidate
 from research_agent.store import CandidateStore
 from research_agent.x_api import (
@@ -28,6 +28,25 @@ from research_agent.x_api import (
 DEFAULT_DB = Path("data/research_agent.sqlite")
 DEFAULT_EXPORT = Path("exports/candidates.xlsx")
 DEFAULT_CONFIG = Path("config/queries.yaml")
+NON_DISASTER_REQUIRED_TERMS = [
+    "wildfire",
+    "fire",
+    "flood",
+    "flooding",
+    "hurricane",
+    "earthquake",
+    "tornado",
+    "storm",
+    "disaster",
+    "evacuation",
+    "emergency",
+    "crisis",
+    "drowning",
+    "buried",
+    "swamped",
+    "meltdown",
+    "surge",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +96,17 @@ def build_parser() -> argparse.ArgumentParser:
     collect_balanced_parser.add_argument("--limit-per-query", type=int, default=100)
     collect_balanced_parser.add_argument("--min-confidence", type=float, default=0.65)
     collect_balanced_parser.add_argument("--output", default=str(DEFAULT_EXPORT))
+
+    fill_balanced_parser = subparsers.add_parser(
+        "fill-balanced",
+        help="Collect, label, and cap candidates until every target bucket is filled.",
+    )
+    fill_balanced_parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    fill_balanced_parser.add_argument("--target-per-case", type=int, default=50)
+    fill_balanced_parser.add_argument("--max-rounds", type=int, default=20)
+    fill_balanced_parser.add_argument("--limit-per-query", type=int, default=50)
+    fill_balanced_parser.add_argument("--min-confidence", type=float, default=0.65)
+    fill_balanced_parser.add_argument("--output", default=str(DEFAULT_EXPORT))
 
     subparsers.add_parser("balance", help="Print balance counts for the eight target cells.")
     return parser
@@ -158,6 +188,19 @@ def main(argv: list[str] | None = None) -> int:
             output_path=args.output,
         )
 
+    if args.command == "fill-balanced":
+        store.initialize()
+        return _fill_balanced(
+            store=store,
+            workspace=workspace,
+            config_path=args.config,
+            target_per_case=args.target_per_case,
+            max_rounds=args.max_rounds,
+            limit_per_query=args.limit_per_query,
+            min_confidence=args.min_confidence,
+            output_path=args.output,
+        )
+
     if args.command == "balance":
         store.initialize()
         candidates = store.list_candidates()
@@ -200,6 +243,8 @@ def _collect_from_config(
     workspace: Path,
     config_path: str,
     limit: int,
+    pagination_tokens: dict[str, str] | None = None,
+    active_case_labels: set[str] | None = None,
 ) -> tuple[int, int]:
     config = _load_yaml(_resolve(workspace, config_path))
     client = XApiClient()
@@ -207,14 +252,24 @@ def _collect_from_config(
     failed = 0
     for query_config in config.get("queries", []):
         name = query_config["name"]
+        if not _query_targets_active(query_config, active_case_labels):
+            continue
+        if pagination_tokens is not None and pagination_tokens.get(name) == "":
+            continue
         query = query_config["query"]
         seed_labels = query_config.get("seed_labels", {})
         required_terms = query_config.get("required_terms", [])
+        next_token = pagination_tokens.get(name) if pagination_tokens is not None else None
         started = datetime.now(UTC).isoformat()
         error = ""
         candidates = []
         try:
-            payload = client.search_recent(query, max_results=limit)
+            if next_token:
+                payload = client.search_recent(query, max_results=limit, next_token=next_token)
+            else:
+                payload = client.search_recent(query, max_results=limit)
+            if pagination_tokens is not None:
+                pagination_tokens[name] = payload.get("meta", {}).get("next_token", "")
             candidates = candidates_from_search_response(payload, name, query, seed_labels)
             candidates = _filter_by_required_terms(candidates, seed_labels, required_terms)
             for candidate in candidates:
@@ -236,6 +291,18 @@ def _collect_from_config(
         if _is_credits_depleted_error(error):
             break
     return total, failed
+
+
+def _query_targets_active(
+    query_config: dict[str, Any],
+    active_case_labels: set[str] | None,
+) -> bool:
+    if active_case_labels is None:
+        return True
+    target_cases = set(query_config.get("target_cases", []))
+    if not target_cases:
+        return True
+    return bool(target_cases & active_case_labels)
 
 
 def _filter_by_required_terms(
@@ -271,7 +338,10 @@ def _auto_label_candidates(
     labeled = 0
     failed = 0
     skipped = 0
-    for candidate in candidates:
+    if candidates:
+        print(f"Auto-labeling {len(candidates)} candidates")
+    for index, candidate in enumerate(candidates, start=1):
+        print(f"Labeling {index}/{len(candidates)}: {candidate.tweet_id}/{candidate.image_id}", flush=True)
         if not candidate.image_path and not candidate.image_url:
             skipped += 1
             continue
@@ -341,6 +411,194 @@ def _collect_balanced(
     return 1 if any_failed else 0
 
 
+def _fill_balanced(
+    store: CandidateStore,
+    workspace: Path,
+    config_path: str,
+    target_per_case: int,
+    max_rounds: int,
+    limit_per_query: int,
+    min_confidence: float,
+    output_path: str,
+) -> int:
+    any_failed = False
+    pagination_tokens: dict[str, str] = {}
+
+    for round_number in range(1, max_rounds + 1):
+        counts = _complete_case_counts(store.list_candidates())
+        active_case_labels = _underfilled_case_labels(counts, target_per_case)
+        if balanced_target_met(counts, target_per_case):
+            print("Balanced target reached.")
+            break
+
+        print(f"Balanced fill round {round_number}/{max_rounds}")
+        print(f"Collecting for {len(active_case_labels)} underfilled buckets")
+        _, collect_failed = _collect_from_config(
+            store,
+            workspace,
+            config_path,
+            limit_per_query,
+            pagination_tokens=pagination_tokens,
+            active_case_labels=active_case_labels,
+        )
+        downloaded, download_failed = record_image_downloads(store, _resolve(workspace, "data/images"))
+        print(f"Downloaded {downloaded} images; {download_failed} failed")
+        unlabeled_count = _count_unlabeled_candidates(store)
+        labeled, label_failed = _auto_label_candidates(
+            store,
+            limit=unlabeled_count,
+            relabel=False,
+        )
+        print(f"Auto-labeled {labeled} candidates; {label_failed} failed")
+        removed_non_disaster = _remove_non_disaster_without_terms(store)
+        if removed_non_disaster:
+            print(
+                "Removed "
+                f"{removed_non_disaster} non-disaster candidates without disaster terms"
+            )
+        removed = _enforce_balanced_target(store, target_per_case, min_confidence)
+        if removed:
+            print(f"Removed {removed} candidates outside the balanced target")
+        any_failed = any_failed or bool(collect_failed or label_failed)
+
+        counts = _complete_case_counts(store.list_candidates())
+        for case_label, count in counts.items():
+            print(f"{case_label}: {count}/{target_per_case}")
+        if balanced_target_met(counts, target_per_case):
+            print("Balanced target reached.")
+            break
+
+    final_counts = _complete_case_counts(store.list_candidates())
+    removed_unlabeled = _remove_unlabeled_candidates(store)
+    if removed_unlabeled:
+        print(f"Removed {removed_unlabeled} unlabeled candidates before export")
+    export_path = export_workbook(store, _resolve(workspace, output_path))
+    print(f"Exported workbook to {export_path}")
+    if not balanced_target_met(final_counts, target_per_case):
+        print(
+            "Balanced target not reached. Rerun the command to continue filling buckets.",
+            file=sys.stderr,
+        )
+        return 1
+    return 1 if any_failed else 0
+
+
+def _remove_non_disaster_without_terms(store: CandidateStore) -> int:
+    candidates = [
+        candidate
+        for candidate in store.list_candidates()
+        if candidate.disaster_label == "not_real_disaster"
+        and not text_contains_required_term(
+            candidate.tweet_text,
+            NON_DISASTER_REQUIRED_TERMS,
+        )
+    ]
+    return store.delete_candidates(
+        [(candidate.tweet_id, candidate.image_id) for candidate in candidates]
+    )
+
+
+def _complete_case_counts(candidates: list[Candidate]) -> dict[str, int]:
+    counts = {case_label: 0 for case_label in ALL_CASES}
+    for candidate in candidates:
+        case_label = _candidate_case_label(candidate)
+        if case_label in counts:
+            counts[case_label] += 1
+    return counts
+
+
+def _count_unlabeled_candidates(store: CandidateStore) -> int:
+    return sum(
+        1
+        for candidate in store.list_candidates()
+        if _candidate_case_label(candidate) == "unknown"
+    )
+
+
+def _remove_unlabeled_candidates(store: CandidateStore) -> int:
+    candidates = [
+        candidate
+        for candidate in store.list_candidates()
+        if _candidate_case_label(candidate) == "unknown"
+    ]
+    return store.delete_candidates(
+        [(candidate.tweet_id, candidate.image_id) for candidate in candidates]
+    )
+
+
+def _underfilled_case_labels(
+    counts: dict[str, int],
+    target_per_case: int,
+) -> set[str]:
+    return {
+        case_label
+        for case_label in ALL_CASES
+        if counts.get(case_label, 0) < target_per_case
+    }
+
+
+def _enforce_balanced_target(
+    store: CandidateStore,
+    target_per_case: int,
+    min_confidence: float,
+) -> int:
+    removals = _candidates_outside_balanced_target(
+        store.list_candidates(),
+        target_per_case,
+        min_confidence,
+    )
+    return store.delete_candidates(
+        [(candidate.tweet_id, candidate.image_id) for candidate in removals]
+    )
+
+
+def _candidates_outside_balanced_target(
+    candidates: list[Candidate],
+    target_per_case: int,
+    min_confidence: float,
+) -> list[Candidate]:
+    removals: list[Candidate] = []
+    grouped = {case_label: [] for case_label in ALL_CASES}
+
+    for candidate in candidates:
+        case_label = _candidate_case_label(candidate)
+        if case_label not in grouped:
+            continue
+        grouped[case_label].append(candidate)
+
+    for case_candidates in grouped.values():
+        case_candidates.sort(key=_balanced_keep_sort_key)
+        removals.extend(case_candidates[target_per_case:])
+    return removals
+
+
+def _candidate_case_label(candidate: Candidate) -> str:
+    if candidate.case_label and candidate.case_label != "unknown":
+        return candidate.case_label
+    return derive_case_label(
+        candidate.text_label,
+        candidate.image_label,
+        candidate.disaster_label,
+    )
+
+
+def _candidate_min_confidence(candidate: Candidate) -> float:
+    return min(
+        candidate.text_confidence,
+        candidate.image_confidence,
+        candidate.disaster_confidence,
+    )
+
+
+def _balanced_keep_sort_key(candidate: Candidate) -> tuple[float, str, str, str]:
+    return (
+        -_candidate_min_confidence(candidate),
+        candidate.collected_at,
+        candidate.tweet_id,
+        candidate.image_id,
+    )
+
+
 def _resolve(workspace: Path, path: str | Path) -> Path:
     path = Path(path)
     if path.is_absolute():
@@ -375,14 +633,21 @@ def _starter_queries() -> str:
     return """queries:
   - name: wildfire_real_disaster_images
     query: '(wildfire OR fire OR evacuation) has:images lang:en -is:retweet'
+    target_cases:
+      - literal_text__literal_image__real_disaster
     seed_labels:
       disaster_label: real_disaster
   - name: flood_real_disaster_images
     query: '(flood OR flooding OR flashflood) has:images lang:en -is:retweet'
+    target_cases:
+      - literal_text__literal_image__real_disaster
     seed_labels:
       disaster_label: real_disaster
   - name: non_disaster_figurative_images
     query: '("storm of" OR "flood of" OR "on fire") has:images lang:en -is:retweet'
+    target_cases:
+      - figurative_text__literal_image__not_real_disaster
+      - figurative_text__figurative_image__not_real_disaster
     required_terms:
       - storm
       - flood

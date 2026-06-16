@@ -16,16 +16,23 @@ def test_run_script_wraps_collection_workflow():
     assert "research-agent balance" in content
 
 
-def test_collect_tweets_script_only_collects_downloads_and_exports():
+def test_collect_tweets_script_runs_balanced_fill_workflow():
     script = Path("collect_tweets.sh")
 
     assert script.exists()
     content = script.read_text(encoding="utf-8")
-    assert "research-agent collect --config \"$CONFIG_PATH\" --limit \"$LIMIT\"" in content
-    assert "research-agent download-images" in content
-    assert "research-agent export --output \"$EXPORT_PATH\"" in content
-    assert "auto-label" not in content
-    assert "collect-balanced" not in content
+    assert "LIMIT=\"${1:-25}\"" in content
+    assert "TARGET_PER_CASE=\"${TARGET_PER_CASE:-5}\"" in content
+    assert "MAX_ROUNDS=\"${MAX_ROUNDS:-3}\"" in content
+    assert "MIN_CONFIDENCE=\"${MIN_CONFIDENCE:-0.65}\"" in content
+    assert "research-agent fill-balanced" in content
+    assert "--target-per-case \"$TARGET_PER_CASE\"" in content
+    assert "--max-rounds \"$MAX_ROUNDS\"" in content
+    assert "--limit-per-query \"$LIMIT\"" in content
+    assert "--min-confidence \"$MIN_CONFIDENCE\"" in content
+    assert "--output \"$EXPORT_PATH\"" in content
+    assert "research-agent collect --config \"$CONFIG_PATH\" --limit \"$LIMIT\"" not in content
+    assert "research-agent download-images" not in content
 
 
 def test_label_tweets_script_only_labels_existing_candidates():

@@ -2,6 +2,7 @@ import zipfile
 
 from research_agent.auto_label import AutoLabelResult, OpenAIClassifier
 from research_agent.cli import main
+from research_agent.labels import ALL_CASES
 from research_agent.models import Candidate
 from research_agent.store import CandidateStore
 from research_agent.x_api import XApiClient
@@ -177,7 +178,7 @@ def test_cli_auto_label_requires_openai_key(tmp_path, monkeypatch, capsys):
     assert "OPENAI_API_KEY is required" in output.err
 
 
-def test_cli_auto_label_updates_candidate_with_fake_classifier(tmp_path, monkeypatch):
+def test_cli_auto_label_updates_candidate_with_fake_classifier(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("OPENAI_API_KEY", "key")
     main(["--workspace", str(tmp_path), "init"])
     store = CandidateStore(tmp_path / "data" / "research_agent.sqlite")
@@ -204,7 +205,10 @@ def test_cli_auto_label_updates_candidate_with_fake_classifier(tmp_path, monkeyp
 
     exit_code = main(["--workspace", str(tmp_path), "auto-label", "--limit", "1"])
 
+    output = capsys.readouterr()
     assert exit_code == 0
+    assert "Auto-labeling 1 candidates" in output.out
+    assert "Labeling 1/1: 123/img" in output.out
     rows = _candidate_rows(tmp_path)
     assert rows[0]["text_label"] == "figurative"
     assert rows[0]["image_label"] == "literal"
@@ -274,9 +278,384 @@ def test_cli_collect_balanced_runs_round_and_exports(tmp_path, monkeypatch):
     assert (tmp_path / "exports" / "candidates.xlsx").exists()
 
 
+def test_cli_fill_balanced_prunes_overflow_and_reaches_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+
+    def fake_collect(
+        store,
+        workspace,
+        config_path,
+        limit,
+        pagination_tokens=None,
+        active_case_labels=None,
+    ):
+        for index, case_label in enumerate(ALL_CASES):
+            text_label, image_label, disaster_label = _labels_from_case(case_label)
+            store.upsert_candidate(
+                Candidate(
+                    tweet_id=f"{index}",
+                    image_id="img",
+                    tweet_text=_tweet_text_for_case(case_label, index),
+                    image_url=f"https://example.com/{index}.jpg",
+                    text_label=text_label,
+                    image_label=image_label,
+                    disaster_label=disaster_label,
+                    text_confidence=0.95,
+                    image_confidence=0.95,
+                    disaster_confidence=0.95,
+                )
+            )
+        store.upsert_candidate(
+            Candidate(
+                tweet_id="overflow",
+                image_id="img",
+                tweet_text="Overflow candidate",
+                image_url="https://example.com/overflow.jpg",
+                text_label="literal",
+                image_label="literal",
+                disaster_label="real_disaster",
+                text_confidence=0.70,
+                image_confidence=0.70,
+                disaster_confidence=0.70,
+            )
+        )
+        return len(ALL_CASES) + 1, 0
+
+    def fake_auto_label(store, limit, relabel=False):
+        return 0, 0
+
+    monkeypatch.setattr("research_agent.cli._collect_from_config", fake_collect)
+    monkeypatch.setattr("research_agent.cli._auto_label_candidates", fake_auto_label)
+
+    exit_code = main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "fill-balanced",
+            "--target-per-case",
+            "1",
+            "--max-rounds",
+            "1",
+            "--limit-per-query",
+            "10",
+        ]
+    )
+
+    assert exit_code == 0
+    rows = _candidate_rows(tmp_path)
+    assert len(rows) == len(ALL_CASES)
+    assert {row["case_label"] for row in rows} == set(ALL_CASES)
+    assert (tmp_path / "exports" / "candidates.xlsx").exists()
+
+
+def test_cli_fill_balanced_only_runs_queries_for_underfilled_cases(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+    config_path = tmp_path / "config" / "targeted_queries.yaml"
+    full_case = "literal_text__literal_image__real_disaster"
+    low_case = "figurative_text__literal_image__not_real_disaster"
+    config_path.write_text(
+        f"""queries:
+  - name: full_bucket_query
+    query: 'full bucket query has:images'
+    target_cases:
+      - {full_case}
+    seed_labels:
+      disaster_label: real_disaster
+  - name: low_bucket_query
+    query: 'low bucket query has:images'
+    target_cases:
+      - {low_case}
+    seed_labels:
+      disaster_label: not_real_disaster
+""",
+        encoding="utf-8",
+    )
+    store = CandidateStore(tmp_path / "data" / "research_agent.sqlite")
+    store.upsert_candidate(
+        Candidate(
+            tweet_id="full",
+            image_id="img",
+            tweet_text="Full bucket candidate",
+            image_url="https://example.com/full.jpg",
+            text_label="literal",
+            image_label="literal",
+            disaster_label="real_disaster",
+            text_confidence=0.95,
+            image_confidence=0.95,
+            disaster_confidence=0.95,
+        )
+    )
+    seen_queries = []
+
+    def fake_search_recent(self, query, max_results=100, next_token=None):
+        seen_queries.append(query)
+        return {"data": [], "includes": {"media": []}}
+
+    def fake_auto_label(store, limit, relabel=False):
+        return 0, 0
+
+    monkeypatch.setattr(XApiClient, "search_recent", fake_search_recent)
+    monkeypatch.setattr("research_agent.cli._auto_label_candidates", fake_auto_label)
+
+    exit_code = main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "fill-balanced",
+            "--config",
+            str(config_path),
+            "--target-per-case",
+            "1",
+            "--max-rounds",
+            "1",
+            "--limit-per-query",
+            "10",
+        ]
+    )
+
+    assert exit_code == 1
+    assert seen_queries == ["low bucket query has:images"]
+
+
+def test_cli_fill_balanced_labels_all_unlabeled_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+    seen_limits = []
+
+    def fake_collect(
+        store,
+        workspace,
+        config_path,
+        limit,
+        pagination_tokens=None,
+        active_case_labels=None,
+    ):
+        for index in range(3):
+            store.upsert_candidate(
+                Candidate(
+                    tweet_id=f"unknown-{index}",
+                    image_id="img",
+                    image_url=f"https://example.com/{index}.jpg",
+                )
+            )
+        return 3, 0
+
+    def fake_auto_label(store, limit, relabel=False):
+        seen_limits.append(limit)
+        return 0, 0
+
+    monkeypatch.setattr("research_agent.cli._collect_from_config", fake_collect)
+    monkeypatch.setattr("research_agent.cli._auto_label_candidates", fake_auto_label)
+
+    main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "fill-balanced",
+            "--target-per-case",
+            "1",
+            "--max-rounds",
+            "1",
+            "--limit-per-query",
+            "10",
+        ]
+    )
+
+    assert seen_limits == [3]
+
+
+def test_cli_fill_balanced_removes_unlabeled_leftovers_before_export(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+
+    def fake_collect(
+        store,
+        workspace,
+        config_path,
+        limit,
+        pagination_tokens=None,
+        active_case_labels=None,
+    ):
+        store.upsert_candidate(
+            Candidate(
+                tweet_id="unknown",
+                image_id="img",
+                image_url="https://example.com/unknown.jpg",
+            )
+        )
+        return 1, 0
+
+    def fake_auto_label(store, limit, relabel=False):
+        return 0, 0
+
+    monkeypatch.setattr("research_agent.cli._collect_from_config", fake_collect)
+    monkeypatch.setattr("research_agent.cli._auto_label_candidates", fake_auto_label)
+
+    exit_code = main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "fill-balanced",
+            "--target-per-case",
+            "1",
+            "--max-rounds",
+            "1",
+            "--limit-per-query",
+            "10",
+        ]
+    )
+
+    assert exit_code == 1
+    assert _candidate_rows(tmp_path) == []
+
+
+def test_cli_fill_balanced_does_not_prune_low_confidence_rows_below_target(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+
+    def fake_collect(
+        store,
+        workspace,
+        config_path,
+        limit,
+        pagination_tokens=None,
+        active_case_labels=None,
+    ):
+        store.upsert_candidate(
+            Candidate(
+                tweet_id="low-confidence",
+                image_id="img",
+                image_url="https://example.com/low.jpg",
+                text_label="figurative",
+                image_label="literal",
+                disaster_label="real_disaster",
+                text_confidence=0.99,
+                image_confidence=0.40,
+                disaster_confidence=0.99,
+            )
+        )
+        return 1, 0
+
+    def fake_auto_label(store, limit, relabel=False):
+        return 0, 0
+
+    monkeypatch.setattr("research_agent.cli._collect_from_config", fake_collect)
+    monkeypatch.setattr("research_agent.cli._auto_label_candidates", fake_auto_label)
+
+    main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "fill-balanced",
+            "--target-per-case",
+            "1",
+            "--max-rounds",
+            "1",
+            "--limit-per-query",
+            "10",
+        ]
+    )
+
+    rows = _candidate_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["tweet_id"] == "low-confidence"
+
+
+def test_cli_fill_balanced_removes_non_disaster_rows_without_disaster_terms(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    main(["--workspace", str(tmp_path), "init"])
+
+    def fake_collect(
+        store,
+        workspace,
+        config_path,
+        limit,
+        pagination_tokens=None,
+        active_case_labels=None,
+    ):
+        store.upsert_candidate(
+            Candidate(
+                tweet_id="sports",
+                image_id="img",
+                tweet_text="World Cup match update with goals and highlights.",
+                image_url="https://example.com/sports.jpg",
+                text_label="literal",
+                image_label="literal",
+                disaster_label="not_real_disaster",
+                text_confidence=0.95,
+                image_confidence=0.95,
+                disaster_confidence=0.95,
+            )
+        )
+        store.upsert_candidate(
+            Candidate(
+                tweet_id="metaphor",
+                image_id="img",
+                tweet_text="The team is on fire after a storm of criticism.",
+                image_url="https://example.com/metaphor.jpg",
+                text_label="figurative",
+                image_label="literal",
+                disaster_label="not_real_disaster",
+                text_confidence=0.95,
+                image_confidence=0.95,
+                disaster_confidence=0.95,
+            )
+        )
+        return 2, 0
+
+    def fake_auto_label(store, limit, relabel=False):
+        return 0, 0
+
+    monkeypatch.setattr("research_agent.cli._collect_from_config", fake_collect)
+    monkeypatch.setattr("research_agent.cli._auto_label_candidates", fake_auto_label)
+
+    main(
+        [
+            "--workspace",
+            str(tmp_path),
+            "fill-balanced",
+            "--target-per-case",
+            "2",
+            "--max-rounds",
+            "1",
+            "--limit-per-query",
+            "10",
+        ]
+    )
+
+    rows = _candidate_rows(tmp_path)
+    assert [row["tweet_id"] for row in rows] == ["metaphor"]
+
+
 def _candidate_rows(workspace):
     import sqlite3
 
     connection = sqlite3.connect(workspace / "data" / "research_agent.sqlite")
     connection.row_factory = sqlite3.Row
     return connection.execute("select * from candidates order by tweet_id").fetchall()
+
+
+def _labels_from_case(case_label):
+    text_part, rest = case_label.split("_text__", 1)
+    image_part, disaster_label = rest.split("_image__", 1)
+    return text_part, image_part, disaster_label
+
+
+def _tweet_text_for_case(case_label, index):
+    if case_label.endswith("not_real_disaster"):
+        return f"Candidate {index} uses storm language outside a real disaster."
+    return f"Candidate {index}"
